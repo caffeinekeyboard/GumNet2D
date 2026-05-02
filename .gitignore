@@ -1,0 +1,84 @@
+# --- Byte-compiled / optimized ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Distribution / packaging ---
+build/
+dist/
+wheels/
+*.egg
+*.egg-info/
+.eggs/
+MANIFEST
+pip-wheel-metadata/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Test & coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.cache/
+
+# --- Type checkers & linters ---
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
+.pyre/
+.pytype/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# --- Environment / secrets ---
+.env
+.env.*
+.envrc
+.python-version
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# --- OS ---
+Thumbs.db
+Desktop.ini
+
+# --- PyTorch / ML artifacts ---
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.h5
+pytorch_model.bin
+
+# --- Training / experiment outputs ---
+runs/
+wandb/
+mlruns/
+lightning_logs/
+tb_logs/
+tensorboard/
+checkpoints/
+outputs/
+logs/
+
+# --- Local data (uncomment if you add a data/ dir) ---
+# data/
+# *.npy
+# *.npz
