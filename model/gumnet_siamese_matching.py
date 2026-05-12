@@ -44,8 +44,6 @@ class GumNetSiameseMatching(nn.Module):
         torch.Size([4, 102400]) torch.Size([4, 102400])
     """
     def __init__(self, in_channels: int = 196, out_channels: int = 1024):
-        """
-        """
         super(GumNetSiameseMatching, self).__init__()
         
         self.correlation_layer = FeatureCorrelation2D()
