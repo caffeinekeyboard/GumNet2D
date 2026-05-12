@@ -46,13 +46,11 @@ class GumNetNonLinearAlignment(nn.Module):
         self.grid_size = grid_size
         self.num_control_points = grid_size * grid_size
         self.lambda_scale = lambda_scale
-
+        
         self.fc1 = nn.Linear(input_dim, 2000)
         self.fc2 = nn.Linear(2000, 2000)
         self.fc_out = nn.Linear(2000, self.num_control_points * 2)
 
-        # Fixed source control-point grid in normalized coords, kept inside [-0.8, 0.8]
-        # to leave margin from the image boundary (TPS is ill-conditioned at corners).
         coords = torch.linspace(-0.8, 0.8, grid_size)
         gy, gx = torch.meshgrid(coords, coords, indexing='ij')
         source_pts = torch.stack([gx.reshape(-1), gy.reshape(-1)], dim=1)  # (N, 2) as (x, y)
@@ -70,8 +68,8 @@ class GumNetNonLinearAlignment(nn.Module):
             torch.linspace(-1.0, 1.0, W, device=device, dtype=dtype),
             indexing='ij',
         )
-        base_grid = torch.stack([x, y], dim=-1)              # (H, W, 2)
-        return base_grid.unsqueeze(0).expand(B, -1, -1, -1)  # (B, H, W, 2)
+        base_grid = torch.stack([x, y], dim=-1)
+        return base_grid.unsqueeze(0).expand(B, -1, -1, -1)
 
     def _compute_lambda_map(self, image):
         dx = image[:, :, 1:, :] - image[:, :, :-1, :]
@@ -79,7 +77,6 @@ class GumNetNonLinearAlignment(nn.Module):
         omega = torch.sqrt(
             F.pad(dx ** 2, (0, 0, 0, 1)) + F.pad(dy ** 2, (0, 1, 0, 0))
         ) + 1e-6
-        # Collapse channels by mean so multi-channel inputs reduce to a single field.
         omega = omega.mean(dim=1, keepdim=True)
         l_map = 1.0 / (omega.pow(4) + 1e-7)
         mean = l_map.mean(dim=(1, 2, 3), keepdim=True).clamp_min(1e-12)
@@ -87,55 +84,45 @@ class GumNetNonLinearAlignment(nn.Module):
 
     @staticmethod
     def _tps_kernel(pts_a, pts_b):
-        """U(r) = r^2 * log(r^2 + eps). pts_a: (..., M, 2), pts_b: (..., N, 2)."""
         diff = pts_a.unsqueeze(-2) - pts_b.unsqueeze(-3)
         r2 = (diff ** 2).sum(dim=-1)
         return r2 * torch.log(r2 + 1e-6)
 
     def _solve_tps(self, target_pts, l_map):
-        """Solve the regularized TPS linear system. Returns coefficients of shape (B, N+3, 2)."""
         B, N, _ = target_pts.shape
         device, dtype = target_pts.device, target_pts.dtype
         source_pts = self.source_pts.to(device=device, dtype=dtype)
-
-        K = self._tps_kernel(source_pts, source_pts)              # (N, N)
-        K = K.unsqueeze(0).expand(B, -1, -1)                       # (B, N, N)
-        P = torch.cat([torch.ones(N, 1, device=device, dtype=dtype), source_pts], dim=1)  # (N, 3)
-        P = P.unsqueeze(0).expand(B, -1, -1)                       # (B, N, 3)
-
-        # Sample λ at each source control point from the adaptive map.
+        K = self._tps_kernel(source_pts, source_pts)               # [N, N]
+        K = K.unsqueeze(0).expand(B, -1, -1)                       # [B, N, N]
+        P = torch.cat([torch.ones(N, 1, device=device, dtype=dtype), source_pts], dim=1)  # [N, 3]
+        P = P.unsqueeze(0).expand(B, -1, -1)                       # [B, N, 3]
         sample_grid = source_pts.view(1, 1, N, 2).expand(B, -1, -1, -1)
         lam = F.grid_sample(
             l_map, sample_grid, mode='bilinear', padding_mode='border', align_corners=True
         ).view(B, N)
-
-        K_reg = K + torch.diag_embed(lam)                          # (B, N, N)
-
+        K_reg = K + torch.diag_embed(lam)                          # [B, N, N]
         zero_33 = torch.zeros(B, 3, 3, device=device, dtype=dtype)
-        top = torch.cat([K_reg, P], dim=2)                         # (B, N, N+3)
-        bot = torch.cat([P.transpose(1, 2), zero_33], dim=2)       # (B, 3, N+3)
-        L = torch.cat([top, bot], dim=1)                           # (B, N+3, N+3)
-
+        top = torch.cat([K_reg, P], dim=2)                         # [B, N, N+3]
+        bot = torch.cat([P.transpose(1, 2), zero_33], dim=2)       # [B, 3, N+3]
+        L = torch.cat([top, bot], dim=1)                           # [B, N+3, N+3]
         zero_32 = torch.zeros(B, 3, 2, device=device, dtype=dtype)
-        Y = torch.cat([target_pts, zero_32], dim=1)                # (B, N+3, 2)
-
-        return torch.linalg.solve(L, Y)                            # (B, N+3, 2)
+        Y = torch.cat([target_pts, zero_32], dim=1)                # [B, N+3, 2]
+        return torch.linalg.solve(L, Y)                            # [B, N+3, 2]
 
     def _evaluate_tps(self, W, H, W_size, device, dtype):
-        """Evaluate the TPS function over a dense H x W_size grid. Returns (B, H, W_size, 2)."""
         B = W.shape[0]
         N = self.source_pts.shape[0]
         source_pts = self.source_pts.to(device=device, dtype=dtype)
 
-        base_grid = self._create_base_grid(B, H, W_size, device, dtype)   # (B, H, W, 2)
-        grid_flat = base_grid.reshape(B, H * W_size, 2)                   # (B, HW, 2)
+        base_grid = self._create_base_grid(B, H, W_size, device, dtype)   # [B, H, W, 2]
+        grid_flat = base_grid.reshape(B, H * W_size, 2)                   # [B, HW, 2]
 
-        U = self._tps_kernel(grid_flat, source_pts.unsqueeze(0).expand(B, -1, -1))  # (B, HW, N)
+        U = self._tps_kernel(grid_flat, source_pts.unsqueeze(0).expand(B, -1, -1))  # [B, HW, N]
         P_grid = torch.cat(
             [torch.ones(B, H * W_size, 1, device=device, dtype=dtype), grid_flat], dim=2
-        )                                                                 # (B, HW, 3)
+        )                                                                 # [B, HW, 3]
 
-        warped = U @ W[:, :N] + P_grid @ W[:, N:]                         # (B, HW, 2)
+        warped = U @ W[:, :N] + P_grid @ W[:, N:]                         # [B, HW, 2]
         return warped.view(B, H, W_size, 2)
 
     def warp(self, image, target_pts, l_map):
@@ -174,15 +161,15 @@ class GumNetNonLinearAlignment(nn.Module):
         c = torch.cat([c_ab, c_ba], dim=1)
         c = F.relu(self.fc1(c))
         c = F.relu(self.fc2(c))
-        raw_shifts = self.fc_out(c)                                       # (B, N*2)
+        raw_shifts = self.fc_out(c)                                       # [B, N*2]
 
-        delta_pts = raw_shifts.view(B, self.num_control_points, 2)        # (B, N, 2)
+        delta_pts = raw_shifts.view(B, self.num_control_points, 2)        # [B, N, 2]
         target_pts = self.source_pts.to(device=device, dtype=dtype).unsqueeze(0) + delta_pts
 
-        l_map = self._compute_lambda_map(source_image)                    # (B, 1, H, W)
+        l_map = self._compute_lambda_map(source_image)                    # [B, 1, H, W]
 
-        coeffs = self._solve_tps(target_pts, l_map)                       # (B, N+3, 2)
-        warped_coords = self._evaluate_tps(coeffs, H, W, device, dtype)   # (B, H, W, 2)
+        coeffs = self._solve_tps(target_pts, l_map)                       # [B, N+3, 2]
+        warped_coords = self._evaluate_tps(coeffs, H, W, device, dtype)   # [B, H, W, 2]
 
         base_grid = self._create_base_grid(B, H, W, device, dtype)
         displacement_field = (warped_coords - base_grid).permute(0, 3, 1, 2).contiguous()
