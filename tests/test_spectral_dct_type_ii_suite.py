@@ -135,7 +135,7 @@ def test_lineardct_frozen_weights(device, dtype):
     
     assert x.grad is not None, "Input gradient not computed through LinearDCT."
     assert torch.norm(x.grad) > 0, "Input gradient is zero (unexpected)."
-    assert layer.weight.grad is None, "LinearDCT weights should not receive gradients."
+    assert layer.weight.grad is None, "LinearDCT weights should not receive gradients." # the weights are intentionally frozen to preserve the mathematical properties of DCT
     assert_tensors_close(layer.weight, initial_weight)
 
 def test_spectral_pooling_end_to_end_train_step(device, dtype):
