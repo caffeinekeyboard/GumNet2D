@@ -80,7 +80,8 @@ class GumNetNonLinearAlignment(nn.Module):
         omega = omega.mean(dim=1, keepdim=True)
         l_map = 1.0 / (omega.pow(4) + 1e-7)
         mean = l_map.mean(dim=(1, 2, 3), keepdim=True).clamp_min(1e-12)
-        return (l_map / mean) * self.lambda_scale
+        final_lmap = (l_map / mean) * self.lambda_scale
+        return final_lmap + 1e-6 # adding epsilon floor for numerical stability in TPS solver
 
     @staticmethod
     def _tps_kernel(pts_a, pts_b):
